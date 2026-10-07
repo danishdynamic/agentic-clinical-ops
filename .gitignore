@@ -1,0 +1,44 @@
+# Environment and sensitive keys
+.env
+.env.*
+!.env.example
+
+# Build and distribution outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Dependency directories
+node_modules/
+.pnpm-store/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Fastify / Node runtime temp files
+.cache/
+tmp/
+temp/
+
+# Testing & Coverage
+coverage/
+.nyc_output/
+
+# IDE and OS metadata
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
