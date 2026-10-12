@@ -1,3 +1,5 @@
+version: "3.8"
+
 services:
   postgres:
     image: postgres:16
@@ -8,7 +10,7 @@ services:
       POSTGRES_USER: agentic
       POSTGRES_PASSWORD: agentic_password
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -21,6 +23,68 @@ services:
     volumes:
       - redis_data:/data
 
+  fhir:
+    image: hapiproject/hapi:v7.6.0
+    container_name: agentic-fhir
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+
+  ehrbase:
+    image: ehrbase/ehrbase:2.36.0
+    container_name: agentic-ehrbase
+    restart: unless-stopped
+    environment:
+      DB_URL: jdbc:postgresql://ehrdb:5432/ehrbase
+      DB_USER_ADMIN: ehrbase
+      DB_PASS_ADMIN: ehrbase
+      DB_USER: ehrbase_restricted
+      DB_PASS: ehrbase_restricted
+    depends_on:
+      ehrdb:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+    networks:
+      - ehrbase-net
+
+  ehrdb:
+    image: ehrbase/ehrbase-v2-postgres:16.2
+    container_name: agentic-ehrdb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      EHRBASE_USER_ADMIN: ehrbase
+      EHRBASE_PASSWORD_ADMIN: ehrbase
+      EHRBASE_USER: ehrbase_restricted
+      EHRBASE_PASSWORD: ehrbase_restricted
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - ehrbase-net
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.3
+    container_name: agentic-keycloak
+    restart: unless-stopped
+    command: start-dev
+    ports:
+      - "8082:8080"
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    networks:
+      - ehrbase-net
+
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  ehrbase-net:
