@@ -13,6 +13,7 @@ app.get("/health", async () => {
   return { status: "ok", timestamp: new Date().toISOString() };
 });
 
+
 // Register domain routes (using route prefixes keeps routes clean)
 await app.register(intakeRoutes, { prefix: "/api/v1" });
 

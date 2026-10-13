@@ -8,4 +8,5 @@ export const env = {
     process.env.FHIR_BASE_URL ?? "http://localhost:8080/fhir",
   ehrbaseBaseUrl:
     process.env.EHRBASE_BASE_URL ?? "http://localhost:8081/ehrbase/rest/openehr/v1",
+    geminiApiKey: process.env.GEMINI_API_KEY ?? "",
 };
