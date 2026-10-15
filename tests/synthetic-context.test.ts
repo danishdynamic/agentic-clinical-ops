@@ -1,16 +1,31 @@
-
+import { describe, it, expect } from "vitest";
 import { getSyntheticContext } from "../apps/api/src/ai/tools/synthetic-context.js";
 
-const result = getSyntheticContext({ scenarioId: "demo-001" });
+describe("getSyntheticContext", () => {
+  it("should return the correct context for a known scenario", () => {
+    const result = getSyntheticContext({ scenarioId: "demo-001" });
+    expect(result.symptoms[0]).toBe("mild headache");
+  });
 
-console.log("Known scenario:", result.symptoms[0] === "mild headache");
+  it("should reject invalid or unknown scenarios", () => {
+    expect(() => {
+      getSyntheticContext({ scenarioId: "real-patient-123" });
+    }).toThrow();
+  });
 
-let rejectedInvalidInput = false;
+  it("should reject various invalid input types and payloads", () => {
+    const invalidInputs: unknown[] = [
+      {},
+      { scenarioId: "unknown-scenario" },
+      { scenarioId: 123 },
+      null,
+      undefined,
+    ];
 
-try {
-  getSyntheticContext({ scenarioId: "real-patient-123" });
-} catch {
-  rejectedInvalidInput = true;
-}
-
-console.log("Invalid scenario rejected:", rejectedInvalidInput);
+    for (const input of invalidInputs) {
+      expect(() => {
+        getSyntheticContext(input);
+      }).toThrow();
+    }
+  });
+});

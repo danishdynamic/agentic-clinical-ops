@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { env } from "../config/env.js";
 import {
@@ -11,24 +10,32 @@ const ai = new GoogleGenAI({
 });
 
 export async function createTriageDraft(
-  syntheticScenario: string,
+  syntheticScenario: {
+    scenario: string;
+    historySummary: string;
+  },
 ): Promise<TriageDraft> {
+  const prompt = `
+    You are producing a training-only intake draft.
+    The scenario is fictional and must not be used for real care.
+
+    Available history summary:
+    ${syntheticScenario.historySummary || "No history summary available."}
+
+    Fictional scenario:
+    ${syntheticScenario.scenario}
+
+    Summarize the scenario and suggest one of these labels:
+    routine, prompt, emergency.
+
+    Give at least one reason.
+    Set humanReviewRequired to true.
+    Do not claim that this output is a diagnosis.
+  `;
+
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
-    contents: `
-      You are producing a training-only intake draft.
-      The scenario is fictional and must not be used for real care.
-
-      Summarize the scenario and suggest one of these labels:
-      routine, prompt, emergency.
-
-      Give at least one reason.
-      Set humanReviewRequired to true.
-      Do not claim that this output is a diagnosis.
-
-      Fictional scenario:
-      ${syntheticScenario}
-    `,
+    contents: prompt,
     config: {
       responseMimeType: "application/json",
       responseJsonSchema: {
