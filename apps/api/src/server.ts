@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { intakeRoutes } from "./routes/intake.routes.js";
 import { connectRedis } from "./redis/redis.js";
+import { checkpointer } from "./ai/checkpointer.js";
 
 const app = Fastify({
   logger: {
@@ -16,6 +17,8 @@ app.get("/health", async () => {
 
 // Register domain routes (using route prefixes keeps routes clean)
 await app.register(intakeRoutes, { prefix: "/api/v1" });
+
+await checkpointer.setup();
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || "0.0.0.0";

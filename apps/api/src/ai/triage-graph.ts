@@ -1,11 +1,13 @@
 import {
   Annotation,
   END,
+  interrupt,
   START,
   StateGraph,
 } from "@langchain/langgraph";
 import type { TriageDraft } from "./triage.schema.js";
 import { createTriageDraft } from "./triage.js";
+import { checkpointer } from "./checkpointer.js";
 
 const TriageState = Annotation.Root({
   scenarioId: Annotation<string>(),
@@ -21,8 +23,13 @@ const TriageState = Annotation.Root({
   historySummary: Annotation<string>({
     default: () => "",
   }),
-  nextStep: Annotation<"history" | "draft" | "mark_review">({
+  nextStep: Annotation<"history" | "draft" | "approval">({
     default: () => "history",
+  }),
+  approvalStatus: Annotation<
+    "pending" | "approved" | "rejected"
+  >({
+    default: () => "pending",
   }),
 });
 
@@ -35,7 +42,7 @@ function supervisorNode(state: typeof TriageState.State) {
     return { nextStep: "draft" as const };
   }
 
-  return { nextStep: "mark_review" as const };
+  return { nextStep: "approval" as const };
 }
 
 function routeFromSupervisor(state: typeof TriageState.State) {
@@ -70,9 +77,25 @@ async function draftNode(state: typeof TriageState.State) {
   };
 }
 
-// Node 2: Mark the draft for human review.
-function reviewNode() {
-  return { humanReviewRequired: true };
+// Node 2: Human approval interrupt node
+function approvalNode() {
+  const decision = interrupt({
+    type: "human_approval_required",
+    message: "Review the triage draft before proceeding.",
+  });
+
+  if (
+    typeof decision !== "object" ||
+    decision === null ||
+    !("approved" in decision) ||
+    typeof decision.approved !== "boolean"
+  ) {
+    throw new Error("Invalid human approval decision");
+  }
+
+  return {
+    approvalStatus: decision.approved ? "approved" : "rejected",
+  };
 }
 
 function historyNode(state: typeof TriageState.State) {
@@ -93,15 +116,15 @@ function historyNode(state: typeof TriageState.State) {
 export const triageGraph = new StateGraph(TriageState)
   .addNode("supervisor", supervisorNode)
   .addNode("draft", draftNode)
-  .addNode("mark_review", reviewNode)
+  .addNode("approval", approvalNode)
   .addNode("history", historyNode)
   .addEdge(START, "supervisor")
   .addConditionalEdges("supervisor", routeFromSupervisor, {
     history: "history",
     draft: "draft",
-    mark_review: "mark_review",
+    approval: "approval",
   })
   .addEdge("history", "supervisor")
   .addEdge("draft", "supervisor")
-  .addEdge("mark_review", END)
-  .compile();
+  .addEdge("approval", END)
+  .compile({ checkpointer });
