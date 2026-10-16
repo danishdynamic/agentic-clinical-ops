@@ -15,7 +15,9 @@ const TriageState = Annotation.Root({
     default: () => "",
   }),
   humanReviewRequired: Annotation<boolean>({
-    default: () => false,
+    default: () => {
+      return false;
+    },
   }),
   triageDraft: Annotation<TriageDraft | null>({
     default: () => null,
@@ -23,7 +25,13 @@ const TriageState = Annotation.Root({
   historySummary: Annotation<string>({
     default: () => "",
   }),
-  nextStep: Annotation<"history" | "draft" | "approval">({
+  nextStep: Annotation<
+    | "history"
+    | "draft"
+    | "approval"
+    | "approved"
+    | "rejected"
+  >({
     default: () => "history",
   }),
   approvalStatus: Annotation<
@@ -98,6 +106,23 @@ function approvalNode() {
   };
 }
 
+// Node 3: Post-approval decision routing node
+function afterApprovalNode(state: typeof TriageState.State) {
+  if (state.approvalStatus === "approved") {
+    return { nextStep: "approved" as const };
+  }
+
+  if (state.approvalStatus === "rejected") {
+    return { nextStep: "rejected" as const };
+  }
+
+  throw new Error("A recorded approval decision is required");
+}
+
+function routeAfterApproval(state: typeof TriageState.State) {
+  return state.nextStep;
+}
+
 function historyNode(state: typeof TriageState.State) {
   const summaries: Record<string, string> = {
     "demo-001": "Synthetic history: mild headache for 2 hours.",
@@ -117,6 +142,7 @@ export const triageGraph = new StateGraph(TriageState)
   .addNode("supervisor", supervisorNode)
   .addNode("draft", draftNode)
   .addNode("approval", approvalNode)
+  .addNode("after_approval", afterApprovalNode)
   .addNode("history", historyNode)
   .addEdge(START, "supervisor")
   .addConditionalEdges("supervisor", routeFromSupervisor, {
@@ -126,5 +152,9 @@ export const triageGraph = new StateGraph(TriageState)
   })
   .addEdge("history", "supervisor")
   .addEdge("draft", "supervisor")
-  .addEdge("approval", END)
+  .addEdge("approval", "after_approval")
+  .addConditionalEdges("after_approval", routeAfterApproval, {
+    approved: END,
+    rejected: END,
+  })
   .compile({ checkpointer });
