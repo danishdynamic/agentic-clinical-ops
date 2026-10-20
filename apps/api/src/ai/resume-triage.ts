@@ -5,6 +5,7 @@ import { db } from "../db/postgres.js";
 import { approvals } from "../db/schema/approvals.js";
 import { agentRuns } from "../db/schema/agent-runs.js";
 import { claimRunResume } from "../db/claim-run-resume.js";
+import { markRunCompleted, markRunFailed } from "../db/agent-run-lifecycle.js";
 import { triageGraph } from "./triage-graph.js";
 
 export async function resumeTriageWorkflow(runId: string) {
@@ -34,8 +35,7 @@ export async function resumeTriageWorkflow(runId: string) {
     throw new Error("Invalid persisted approval decision");
   }
 
-  // 3. Retrieve the trusted thread ID from the database record 
-  // (Assuming threadId is stored on agentRuns, or if runId is used as the thread_id)
+  // 3. Retrieve the trusted thread ID from the database record
   const [runRecord] = await db
     .select()
     .from(agentRuns)
@@ -46,8 +46,7 @@ export async function resumeTriageWorkflow(runId: string) {
     throw new Error(`Agent run not found for ID: ${runId}`);
   }
 
-  // Use the trusted thread reference (e.g., runRecord.threadId or runId)
-  const threadId = runId; // Or runRecord.threadId if you added it to the schema
+  const threadId = runId;
 
   const config = {
     configurable: {
@@ -66,15 +65,32 @@ export async function resumeTriageWorkflow(runId: string) {
   try {
     const result = await triageGraph.invoke(
       new Command({
-        resume: { approved: approvalRecord.decision === "approved" },
+        resume: {
+          approved: approvalRecord.decision === "approved",
+        },
       }),
       config,
     );
 
-    // TODO: Update agent run status to 'completed' upon successful finish
+    const finalState = await triageGraph.getState(config);
+
+    if (finalState.next.length > 0) {
+      throw new Error(
+        "Workflow resumed but has not reached a terminal state",
+      );
+    }
+
+    // Centralized lifecycle completion
+    await markRunCompleted(runId);
+
     return result;
   } catch (error) {
-    // TODO: Handle failure state transition if graph invocation throws
+    try {
+      await markRunFailed(runId);
+    } catch {
+      // Ignore if state transition guard prevents overwriting terminal state
+    }
+
     throw error;
   }
 }

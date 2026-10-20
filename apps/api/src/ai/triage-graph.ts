@@ -5,156 +5,237 @@ import {
   START,
   StateGraph,
 } from "@langchain/langgraph";
+import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import type { TriageDraft } from "./triage.schema.js";
 import { createTriageDraft } from "./triage.js";
 import { checkpointer } from "./checkpointer.js";
+import { createFhirMcpClient } from "../mcp/fhir-client.js";
+import { normalizeFhirContext } from "./fhir-context.js";
 
-const TriageState = Annotation.Root({
-  scenarioId: Annotation<string>(),
-  summary: Annotation<string>({
-    default: () => "",
-  }),
-  humanReviewRequired: Annotation<boolean>({
-    default: () => {
-      return false;
-    },
-  }),
-  triageDraft: Annotation<TriageDraft | null>({
-    default: () => null,
-  }),
-  historySummary: Annotation<string>({
-    default: () => "",
-  }),
-  nextStep: Annotation<
-    | "history"
-    | "draft"
-    | "approval"
-    | "approved"
-    | "rejected"
-  >({
-    default: () => "history",
-  }),
-  approvalStatus: Annotation<
-    "pending" | "approved" | "rejected"
-  >({
-    default: () => "pending",
-  }),
-});
+type FhirToolName =
+  | "get_patient"
+  | "get_observations"
+  | "get_allergies";
 
-function supervisorNode(state: typeof TriageState.State) {
-  if (!state.historySummary) {
-    return { nextStep: "history" as const };
-  }
+type FhirMcpClient = {
+  callTool(
+    name: FhirToolName,
+    patientId: string,
+  ): Promise<unknown>;
+  close(): Promise<void>;
+};
 
-  if (!state.triageDraft) {
-    return { nextStep: "draft" as const };
-  }
+type TriageGraphDependencies = {
+  createTriageDraft: typeof createTriageDraft;
+  createFhirMcpClient: () => Promise<FhirMcpClient>;
+  checkpointer: BaseCheckpointSaver;
+};
 
-  return { nextStep: "approval" as const };
-}
-
-function routeFromSupervisor(state: typeof TriageState.State) {
-  return state.nextStep;
-}
-
-// Node 1: Create a draft using Gemini via createTriageDraft
-async function draftNode(state: typeof TriageState.State) {
-  const scenarios: Record<string, string> = {
-    "demo-001":
-      "Fictional training scenario: an adult reports a mild headache after a long day.",
-    "demo-002":
-      "Fictional training scenario: an adult reports a sore throat and runny nose.",
-  };
-
-  const scenarioText = scenarios[state.scenarioId];
-
-  if (!scenarioText) {
-    throw new Error("Unknown synthetic scenario");
-  }
-
-  const scenario = {
-    scenario: scenarioText,
-    historySummary: state.historySummary,
-  };
-
-  const triageDraft = await createTriageDraft(scenario);
-
-  return {
-    summary: triageDraft.summary,
-    triageDraft,
-  };
-}
-
-// Node 2: Human approval interrupt node
-function approvalNode() {
-  const decision = interrupt({
-    type: "human_approval_required",
-    message: "Review the triage draft before proceeding.",
+export function createTriageGraph(
+  dependencies: TriageGraphDependencies = {
+    createTriageDraft,
+    createFhirMcpClient,
+    checkpointer,
+  },
+) {
+  const TriageState = Annotation.Root({
+    scenarioId: Annotation<string>(),
+    summary: Annotation<string>({
+      default: () => "",
+    }),
+    humanReviewRequired: Annotation<boolean>({
+      default: () => {
+        return false;
+      },
+    }),
+    triageDraft: Annotation<TriageDraft | null>({
+      default: () => null,
+    }),
+    historySummary: Annotation<string>({
+      default: () => "",
+    }),
+    fhirPatientId: Annotation<string | undefined>({
+      default: () => undefined,
+    }),
+    fhirContext: Annotation<string>({
+      default: () => "",
+    }),
+    fhirContextLoaded: Annotation<boolean>({
+      default: () => false,
+    }),
+    nextStep: Annotation<
+      | "history"
+      | "fhir_context"
+      | "draft"
+      | "approval"
+      | "approved"
+      | "rejected"
+    >({
+      default: () => "history",
+    }),
+    approvalStatus: Annotation<
+      "pending" | "approved" | "rejected"
+    >({
+      default: () => "pending",
+    }),
   });
 
-  if (
-    typeof decision !== "object" ||
-    decision === null ||
-    !("approved" in decision) ||
-    typeof decision.approved !== "boolean"
-  ) {
-    throw new Error("Invalid human approval decision");
+  function supervisorNode(state: typeof TriageState.State) {
+    if (!state.historySummary) {
+      return { nextStep: "history" as const };
+    }
+
+    if (state.fhirPatientId && !state.fhirContextLoaded) {
+      return { nextStep: "fhir_context" as const };
+    }
+
+    if (!state.triageDraft) {
+      return { nextStep: "draft" as const };
+    }
+
+    return { nextStep: "approval" as const };
   }
 
-  return {
-    approvalStatus: decision.approved ? "approved" : "rejected",
-  };
-}
-
-// Node 3: Post-approval decision routing node
-function afterApprovalNode(state: typeof TriageState.State) {
-  if (state.approvalStatus === "approved") {
-    return { nextStep: "approved" as const };
+  function routeFromSupervisor(state: typeof TriageState.State) {
+    return state.nextStep;
   }
 
-  if (state.approvalStatus === "rejected") {
-    return { nextStep: "rejected" as const };
+  // Node 1: Create a draft using Gemini via dependencies.createTriageDraft
+  async function draftNode(state: typeof TriageState.State) {
+    const scenarios: Record<string, string> = {
+      "demo-001":
+        "Fictional training scenario: an adult reports a mild headache after a long day.",
+      "demo-002":
+        "Fictional training scenario: an adult reports a sore throat and runny nose.",
+    };
+
+    const scenarioText = scenarios[state.scenarioId];
+
+    if (!scenarioText) {
+      throw new Error("Unknown synthetic scenario");
+    }
+
+    const scenario = {
+      scenario: scenarioText,
+      historySummary: state.historySummary,
+      fhirContext: state.fhirContext,
+    };
+
+    const triageDraft =
+      await dependencies.createTriageDraft(scenario);
+
+    return {
+      summary: triageDraft.summary,
+      triageDraft,
+    };
   }
 
-  throw new Error("A recorded approval decision is required");
-}
+  // Node 2: Human approval interrupt node
+  function approvalNode() {
+    const decision = interrupt({
+      type: "human_approval_required",
+      message: "Review the triage draft before proceeding.",
+    });
 
-function routeAfterApproval(state: typeof TriageState.State) {
-  return state.nextStep;
-}
+    if (
+      typeof decision !== "object" ||
+      decision === null ||
+      !("approved" in decision) ||
+      typeof decision.approved !== "boolean"
+    ) {
+      throw new Error("Invalid human approval decision");
+    }
 
-function historyNode(state: typeof TriageState.State) {
-  const summaries: Record<string, string> = {
-    "demo-001": "Synthetic history: mild headache for 2 hours.",
-    "demo-002": "Synthetic history: sore throat and runny nose for 1 day.",
-  };
-
-  const historySummary = summaries[state.scenarioId];
-
-  if (!historySummary) {
-    throw new Error("Unknown synthetic scenario");
+    return {
+      approvalStatus: decision.approved ? "approved" : "rejected",
+    };
   }
 
-  return { historySummary };
+  // Node 3: Post-approval decision routing node
+  function afterApprovalNode(state: typeof TriageState.State) {
+    if (state.approvalStatus === "approved") {
+      return { nextStep: "approved" as const };
+    }
+
+    if (state.approvalStatus === "rejected") {
+      return { nextStep: "rejected" as const };
+    }
+
+    throw new Error("A recorded approval decision is required");
+  }
+
+  function routeAfterApproval(state: typeof TriageState.State) {
+    return state.nextStep;
+  }
+
+  function historyNode(state: typeof TriageState.State) {
+    const summaries: Record<string, string> = {
+      "demo-001": "Synthetic history: mild headache for 2 hours.",
+      "demo-002": "Synthetic history: sore throat and runny nose for 1 day.",
+    };
+
+    const historySummary = summaries[state.scenarioId];
+
+    if (!historySummary) {
+      throw new Error("Unknown synthetic scenario");
+    }
+
+    return { historySummary };
+  }
+
+  // Node 4: FHIR Context loading and normalization node via dependencies.createFhirMcpClient
+  async function fhirContextNode(state: typeof TriageState.State) {
+    if (!state.fhirPatientId) {
+      throw new Error("FHIR patient ID is required for FHIR context");
+    }
+
+    const client = await dependencies.createFhirMcpClient();
+
+    try {
+      const [patient, observations, allergies] = await Promise.all([
+        client.callTool("get_patient", state.fhirPatientId),
+        client.callTool("get_observations", state.fhirPatientId),
+        client.callTool("get_allergies", state.fhirPatientId),
+      ]);
+
+      const fhirContext = normalizeFhirContext(
+        patient,
+        observations,
+        allergies,
+      );
+
+      return {
+        fhirContext,
+        fhirContextLoaded: true,
+      };
+    } finally {
+      await client.close();
+    }
+  }
+
+  return new StateGraph(TriageState)
+    .addNode("supervisor", supervisorNode)
+    .addNode("draft", draftNode)
+    .addNode("approval", approvalNode)
+    .addNode("after_approval", afterApprovalNode)
+    .addNode("history", historyNode)
+    .addNode("fhir_context", fhirContextNode)
+    .addEdge(START, "supervisor")
+    .addConditionalEdges("supervisor", routeFromSupervisor, {
+      history: "history",
+      fhir_context: "fhir_context",
+      draft: "draft",
+      approval: "approval",
+    })
+    .addEdge("history", "supervisor")
+    .addEdge("fhir_context", "supervisor")
+    .addEdge("draft", "supervisor")
+    .addEdge("approval", "after_approval")
+    .addConditionalEdges("after_approval", routeAfterApproval, {
+      approved: END,
+      rejected: END,
+    })
+    .compile({ checkpointer: dependencies.checkpointer });
 }
 
-export const triageGraph = new StateGraph(TriageState)
-  .addNode("supervisor", supervisorNode)
-  .addNode("draft", draftNode)
-  .addNode("approval", approvalNode)
-  .addNode("after_approval", afterApprovalNode)
-  .addNode("history", historyNode)
-  .addEdge(START, "supervisor")
-  .addConditionalEdges("supervisor", routeFromSupervisor, {
-    history: "history",
-    draft: "draft",
-    approval: "approval",
-  })
-  .addEdge("history", "supervisor")
-  .addEdge("draft", "supervisor")
-  .addEdge("approval", "after_approval")
-  .addConditionalEdges("after_approval", routeAfterApproval, {
-    approved: END,
-    rejected: END,
-  })
-  .compile({ checkpointer });
+export const triageGraph = createTriageGraph();
