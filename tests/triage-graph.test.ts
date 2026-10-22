@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Command } from "@langchain/langgraph";
-import { triageGraph } from "../apps/api/src/ai/triage-graph.js";
+import { Command, MemorySaver } from "@langchain/langgraph";
+import { triageGraph, createTriageGraph } from "../apps/api/src/ai/triage-graph.js";
 
 describe("triageGraph with Approval Interrupt", () => {
   it(
@@ -85,5 +85,31 @@ describe("triageGraph with Approval Interrupt", () => {
         config,
       ),
     ).rejects.toThrow("Unknown synthetic scenario");
+  });
+
+  it("propagates a draft-generation failure", async () => {
+    const graph = createTriageGraph({
+      createTriageDraft: async () => {
+        throw new Error("Synthetic Gemini failure");
+      },
+      createFhirMcpClient: async () => ({
+        callTool: async () => {
+          throw new Error("Unexpected MCP call");
+        },
+        close: async () => {},
+      }),
+      checkpointer: new MemorySaver(),
+    });
+
+    await expect(
+      graph.invoke(
+        { scenarioId: "demo-001" },
+        {
+          configurable: {
+            thread_id: "test-gemini-failure-001",
+          },
+        },
+      ),
+    ).rejects.toThrow("Synthetic Gemini failure");
   });
 });
