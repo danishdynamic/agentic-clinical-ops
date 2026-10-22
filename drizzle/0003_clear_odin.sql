@@ -1,0 +1,1 @@
+ALTER TABLE "approvals" ADD CONSTRAINT "approvals_run_id_unique" UNIQUE("run_id");

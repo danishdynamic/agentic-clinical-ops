@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { intakeRoutes } from "./routes/intake.routes.js";
 import { connectRedis } from "./redis/redis.js";
 import { checkpointer } from "./ai/checkpointer.js";
+import { approvalRoutes } from "./routes/approval.routes.js";
 
 const app = Fastify({
   logger: {
@@ -19,6 +20,8 @@ app.get("/health", async () => {
 await app.register(intakeRoutes, { prefix: "/api/v1" });
 
 await checkpointer.setup();
+
+await app.register(approvalRoutes);
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || "0.0.0.0";

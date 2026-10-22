@@ -8,7 +8,7 @@ export async function createAgentRun(patientId: string) {
     .values({
       id: randomUUID(),
       patientId,
-      status: "PENDING",
+      status: "running",
     })
     .returning();
 

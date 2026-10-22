@@ -1,8 +1,8 @@
 import {
   pgTable,
+  uuid,
   text,
   timestamp,
-  uuid,
   unique,
 } from "drizzle-orm/pg-core";
 
@@ -34,5 +34,8 @@ export const approvals = pgTable(
   (table) => [
     unique("approvals_idempotency_key_unique")
       .on(table.idempotencyKey),
+
+    unique("approvals_run_id_unique")
+      .on(table.runId),
   ],
 );
