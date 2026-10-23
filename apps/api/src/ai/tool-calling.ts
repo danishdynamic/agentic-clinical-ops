@@ -1,5 +1,5 @@
 
-import { GoogleGenAI } from "@google/genai";
+import { FunctionCallingConfigMode, GoogleGenAI } from "@google/genai";
 import { env } from "../config/env.js";
 import { getSyntheticContext } from "./tools/synthetic-context.js";
 
@@ -41,7 +41,7 @@ export async function runToolCallingDemo(): Promise<string> {
       ],
       toolConfig: {
         functionCallingConfig: {
-          mode: "ANY",
+          mode: FunctionCallingConfigMode.ANY,
           allowedFunctionNames: ["get_synthetic_context"],
         },
       },

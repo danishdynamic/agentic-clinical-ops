@@ -41,26 +41,33 @@ export function createTriageGraph(
   const TriageState = Annotation.Root({
     scenarioId: Annotation<string>(),
     summary: Annotation<string>({
+      value: (_current, update) => update,
       default: () => "",
     }),
     humanReviewRequired: Annotation<boolean>({
+      value: (_current, update) => update,
       default: () => {
         return false;
       },
     }),
     triageDraft: Annotation<TriageDraft | null>({
+      value: (_current, update) => update,
       default: () => null,
     }),
     historySummary: Annotation<string>({
+      value: (_current, update) => update,
       default: () => "",
     }),
     fhirPatientId: Annotation<string | undefined>({
+      value: (_current, update) => update,
       default: () => undefined,
     }),
     fhirContext: Annotation<string>({
+      value: (_current, update) => update,
       default: () => "",
     }),
     fhirContextLoaded: Annotation<boolean>({
+      value: (_current, update) => update,
       default: () => false,
     }),
     nextStep: Annotation<
@@ -71,11 +78,13 @@ export function createTriageGraph(
       | "approved"
       | "rejected"
     >({
+      value: (_current, update) => update,
       default: () => "history",
     }),
     approvalStatus: Annotation<
       "pending" | "approved" | "rejected"
     >({
+      value: (_current, update) => update,
       default: () => "pending",
     }),
   });
@@ -147,7 +156,9 @@ export function createTriageGraph(
     }
 
     return {
-      approvalStatus: decision.approved ? "approved" : "rejected",
+      approvalStatus: decision.approved
+        ? ("approved" as const)
+        : ("rejected" as const),
     };
   }
 

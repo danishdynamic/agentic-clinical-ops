@@ -8,16 +8,10 @@ import { claimRunResume } from "../db/claim-run-resume.js";
 import { markRunCompleted, markRunFailed } from "../db/agent-run-lifecycle.js";
 import { triageGraph } from "./triage-graph.js";
 
-export async function resumeTriageWorkflow(runId: string) {
-  // 1. Atomically claim the run from 'awaiting_approval' -> 'resuming'
-  const claimedRun = await claimRunResume(runId);
-  if (!claimedRun) {
-    throw new Error(
-      `Run ${runId} cannot be claimed for resume. It may already be resuming, completed, or not awaiting approval.`,
-    );
-  }
-
-  // 2. Load the saved approval record
+export async function resumeTriageWorkflow(
+  runId: string,
+  graph: typeof triageGraph = triageGraph,
+) {
   const [approvalRecord] = await db
     .select()
     .from(approvals)
@@ -46,24 +40,38 @@ export async function resumeTriageWorkflow(runId: string) {
     throw new Error(`Agent run not found for ID: ${runId}`);
   }
 
-  const threadId = runId;
-
-  const config = {
-    configurable: {
-      thread_id: threadId,
-    },
-  };
-
-  // 4. Verify the workflow thread is currently paused at the approval interrupt
-  const currentState = await triageGraph.getState(config);
-  if (!currentState.next || !currentState.next.includes("approval")) {
+  const claimedRun = await claimRunResume(runId);
+  if (!claimedRun) {
     throw new Error(
-      "Workflow is not paused at an approval interrupt or has already completed.",
+      `Run ${runId} cannot be claimed for resume. It may already be resuming or completed.`,
     );
   }
 
+  const config = {
+    configurable: {
+      thread_id: runId,
+    },
+  };
+
   try {
-    const result = await triageGraph.invoke(
+    const currentState = await graph.getState(config);
+
+    if (
+      currentState.next?.length === 0 &&
+      (currentState.values.approvalStatus === "approved" ||
+        currentState.values.approvalStatus === "rejected")
+    ) {
+      await markRunCompleted(runId);
+      return currentState.values;
+    }
+
+    if (!currentState.next?.includes("approval")) {
+      throw new Error(
+        "Workflow is not paused at an approval interrupt or a completed decision checkpoint.",
+      );
+    }
+
+    const result = await graph.invoke(
       new Command({
         resume: {
           approved: approvalRecord.decision === "approved",
@@ -72,7 +80,7 @@ export async function resumeTriageWorkflow(runId: string) {
       config,
     );
 
-    const finalState = await triageGraph.getState(config);
+    const finalState = await graph.getState(config);
 
     if (finalState.next.length > 0) {
       throw new Error(
@@ -87,8 +95,11 @@ export async function resumeTriageWorkflow(runId: string) {
   } catch (error) {
     try {
       await markRunFailed(runId);
-    } catch {
-      // Ignore if state transition guard prevents overwriting terminal state
+    } catch (transitionError) {
+      throw new AggregateError(
+        [error, transitionError],
+        "Workflow resume failed and the run could not be marked failed",
+      );
     }
 
     throw error;

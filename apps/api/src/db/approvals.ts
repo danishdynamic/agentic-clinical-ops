@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 
 import { db } from "./postgres.js";
+import { agentRuns } from "./schema/agent-runs.js";
 import { approvals } from "./schema/approvals.js";
 import { auditEvents } from "./schema/audit-events.js";
 import {
@@ -23,6 +24,45 @@ export async function recordApproval(
 ) {
   try {
     return await db.transaction(async (tx) => {
+      const [run] = await tx
+        .select({ id: agentRuns.id, status: agentRuns.status })
+        .from(agentRuns)
+        .where(eq(agentRuns.id, input.runId))
+        .for("update");
+
+      if (!run) {
+        throw new Error(`Agent run not found: ${input.runId}`);
+      }
+
+      const [existingForRun] = await tx
+        .select()
+        .from(approvals)
+        .where(eq(approvals.runId, input.runId))
+        .limit(1);
+
+      if (existingForRun) {
+        const sameRequest =
+          existingForRun.idempotencyKey === input.idempotencyKey &&
+          existingForRun.decision === input.decision &&
+          existingForRun.reviewerId === input.reviewerId;
+
+        if (sameRequest) {
+          return { approval: existingForRun, replayed: true };
+        }
+
+        if (existingForRun.idempotencyKey === input.idempotencyKey) {
+          throw new IdempotencyConflictError();
+        }
+
+        throw new ApprovalAlreadyRecordedError(input.runId);
+      }
+
+      if (run.status !== "awaiting_approval") {
+        throw new Error(
+          `Run ${input.runId} is not awaiting an approval decision`,
+        );
+      }
+
       const [inserted] = await tx
         .insert(approvals)
         .values({

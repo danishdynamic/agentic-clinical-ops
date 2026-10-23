@@ -38,11 +38,19 @@ export async function createFhirMcpClient() {
         throw new Error(`FHIR MCP tool failed: ${name}`);
       }
 
-      const textContent = result.content.find(
-        (item) => item.type === "text",
-      );
+      const textContent = Array.isArray(result.content)
+        ? result.content.find(
+            (item: unknown): item is { type: "text"; text: string } =>
+              typeof item === "object" &&
+              item !== null &&
+              "type" in item &&
+              item.type === "text" &&
+              "text" in item &&
+              typeof item.text === "string",
+          )
+        : undefined;
 
-      if (!textContent || textContent.type !== "text") {
+      if (!textContent) {
         throw new Error(`FHIR MCP tool returned no text: ${name}`);
       }
 

@@ -1,5 +1,5 @@
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "./postgres.js";
 import { agentRuns } from "./schema/agent-runs.js";
 
@@ -10,7 +10,7 @@ export async function claimRunResume(runId: string) {
     .where(
       and(
         eq(agentRuns.id, runId),
-        eq(agentRuns.status, "awaiting_approval"),
+        inArray(agentRuns.status, ["awaiting_approval", "failed"]),
       ),
     )
     .returning({ id: agentRuns.id });
