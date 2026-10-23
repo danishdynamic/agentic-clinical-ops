@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "tsx apps/api/src/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run --maxWorkers=1 --no-file-parallelism",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:check": "drizzle-kit check"
   },
   "keywords": [],
   "author": "",
@@ -28,6 +31,7 @@
     "dotenv": "^18.0.5",
     "drizzle-orm": "^0.45.3",
     "fastify": "^5.12.5",
+    "jose": "^6.1.0",
     "pg": "^8.23.1",
     "redis": "^6.3.0",
     "zod": "^4.6.5"
