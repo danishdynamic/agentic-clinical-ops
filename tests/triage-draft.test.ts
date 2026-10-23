@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createTriageDraft } from "../apps/api/src/ai/triage.js";
 
 // Mock the GoogleGenAI module
-const mockGenerateContent = vi.fn();
+const mockGenerateContent = vi.hoisted(() => vi.fn());
 vi.mock("@google/genai", () => {
   return {
     GoogleGenAI: class {

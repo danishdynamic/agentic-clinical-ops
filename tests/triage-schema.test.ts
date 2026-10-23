@@ -1,3 +1,5 @@
+import { describe, expect, it } from "vitest";
+
 import { triageDraftSchema } from "../apps/api/src/ai/triage.schema.js";
 
 const validDraft = {
@@ -7,20 +9,26 @@ const validDraft = {
   humanReviewRequired: true,
 };
 
-console.log("Valid draft:", triageDraftSchema.safeParse(validDraft).success);
+describe("triageDraftSchema", () => {
+  it("accepts a valid synthetic draft", () => {
+    expect(triageDraftSchema.safeParse(validDraft).success).toBe(true);
+  });
 
-console.log(
-  "Invalid urgency rejected:",
-  !triageDraftSchema.safeParse({
-    ...validDraft,
-    suggestedUrgency: "super-urgent",
-  }).success,
-);
+  it("rejects an unsupported urgency", () => {
+    expect(
+      triageDraftSchema.safeParse({
+        ...validDraft,
+        suggestedUrgency: "super-urgent",
+      }).success,
+    ).toBe(false);
+  });
 
-console.log(
-  "Missing human review rejected:",
-  !triageDraftSchema.safeParse({
-    ...validDraft,
-    humanReviewRequired: false,
-  }).success,
-);
+  it("rejects a draft that does not require human review", () => {
+    expect(
+      triageDraftSchema.safeParse({
+        ...validDraft,
+        humanReviewRequired: false,
+      }).success,
+    ).toBe(false);
+  });
+});

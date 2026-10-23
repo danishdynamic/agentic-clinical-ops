@@ -28,7 +28,6 @@ describe("Triage Full Lifecycle Integration Tests", () => {
     await db.insert(agentRuns).values({
       id: runId,
       status: "running",
-      scenarioId: "demo-001",
       patientId,
     });
 
