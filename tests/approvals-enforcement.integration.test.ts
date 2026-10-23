@@ -25,8 +25,7 @@ describe("Approvals Enforcement Integration Tests", () => {
     await db.insert(agentRuns).values({
       id: runId,
       status: "awaiting_approval",
-      scenarioId: "demo-001",
-      patientId: "demo-patient-001",
+      patientId: "synthetic-patient-001",
     });
 
     // 2. Record the first approved decision with key approval-key-A

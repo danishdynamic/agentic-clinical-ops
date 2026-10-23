@@ -24,7 +24,6 @@ describe("Agent Run Lifecycle Repository Integration Tests", () => {
     await db.insert(agentRuns).values({
       id: runId,
       status: "running",
-      scenarioId: "demo-001",
       patientId: "synthetic-patient-001",
     });
 
@@ -43,7 +42,6 @@ describe("Agent Run Lifecycle Repository Integration Tests", () => {
     await db.insert(agentRuns).values({
       id: runId,
       status: "running",
-      scenarioId: "demo-001",
       patientId: "synthetic-patient-001",
     });
 
@@ -60,7 +58,6 @@ describe("Agent Run Lifecycle Repository Integration Tests", () => {
     await db.insert(agentRuns).values({
       id: runId,
       status: "resuming",
-      scenarioId: "demo-001",
       patientId: "synthetic-patient-001",
     });
 
@@ -80,7 +77,6 @@ describe("Agent Run Lifecycle Repository Integration Tests", () => {
     await db.insert(agentRuns).values({
       id: runId,
       status: "running", // incorrect state; requires resuming
-      scenarioId: "demo-001",
       patientId: "synthetic-patient-001",
     });
 
@@ -94,14 +90,13 @@ describe("Agent Run Lifecycle Repository Integration Tests", () => {
     await db.insert(agentRuns).values({
       id: runId,
       status: "completed",
-      scenarioId: "demo-001",
       patientId: "synthetic-patient-001",
       completedAt: new Date(),
     });
 
     // markRunFailed requires status "running"
     await expect(markRunFailed(runId)).rejects.toThrow(
-      /Run does not exist or is not in running state/i,
+      /Run does not exist or is not in running or resuming state/i,
     );
 
     // Confirm status remains completed

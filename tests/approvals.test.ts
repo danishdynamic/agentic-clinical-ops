@@ -1,8 +1,10 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { recordApproval } from "../apps/api/src/db/approvals.js";
 import { createAgentRun } from "../apps/api/src/db/agent-runs.js";
+import { IdempotencyConflictError } from "../apps/api/src/db/approval-errors.js";
 import { db } from "../apps/api/src/db/postgres.js";
+import { agentRuns } from "../apps/api/src/db/schema/agent-runs.js";
 import { approvals } from "../apps/api/src/db/schema/approvals.js";
 
 describe("recordApproval integration tests", () => {
@@ -16,6 +18,11 @@ describe("recordApproval integration tests", () => {
 
     const run2 = await createAgentRun("patient-002");
     otherRunId = run2.id;
+
+    await db
+      .update(agentRuns)
+      .set({ status: "awaiting_approval" })
+      .where(inArray(agentRuns.id, [testRunId, otherRunId]));
   });
 
   it("inserts one record on first approval and returns replayed: false", async () => {
@@ -66,9 +73,7 @@ describe("recordApproval integration tests", () => {
         decision: "rejected", // Changed decision
         reviewerId: "dr-smith",
       }),
-    ).rejects.toThrow(
-      "Idempotency key was already used for a different approval request",
-    );
+    ).rejects.toThrow(IdempotencyConflictError);
   });
 
   it("rejects when using the same key with a different run", async () => {
@@ -87,9 +92,7 @@ describe("recordApproval integration tests", () => {
         decision: "approved",
         reviewerId: "dr-smith",
       }),
-    ).rejects.toThrow(
-      "Idempotency key was already used for a different approval request",
-    );
+    ).rejects.toThrow(IdempotencyConflictError);
   });
 
   it("handles concurrent identical requests and results in only one database record", async () => {

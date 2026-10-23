@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import Fastify from "fastify";
 import crypto from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -9,33 +9,54 @@ import { agentRuns } from "../apps/api/src/db/schema/agent-runs.js";
 import { approvals } from "../apps/api/src/db/schema/approvals.js";
 import { auditEvents } from "../apps/api/src/db/schema/audit-events.js";
 import { triageGraph } from "../apps/api/src/ai/triage-graph.js";
+import type { ReviewerIdentity } from "../apps/api/src/auth/reviewer-auth.js";
 
-async function buildApp() {
+const graphState = vi.hoisted(() => ({
+  next: ["approval"],
+  approvalStatus: "pending",
+  decision: "approved",
+  failNextInvoke: false,
+}));
+
+vi.mock("../apps/api/src/ai/triage-graph.js", () => ({
+  triageGraph: {
+    getState: vi.fn(async () => ({
+      next: [...graphState.next],
+      values: { approvalStatus: graphState.approvalStatus },
+    })),
+    invoke: vi.fn(async () => {
+      if (graphState.failNextInvoke) {
+        graphState.failNextInvoke = false;
+        throw new Error("Synthetic graph resume failure");
+      }
+      graphState.approvalStatus = graphState.decision;
+      graphState.next = [];
+      return { approvalStatus: graphState.approvalStatus };
+    }),
+  },
+}));
+
+const reviewerIdentity = {
+  reviewerId: "authenticated-reviewer",
+  roles: ["reviewer"],
+};
+
+async function buildApp(
+  authenticate: (authorization: string | undefined) =>
+    Promise<ReviewerIdentity | null> = async () => reviewerIdentity,
+) {
   const app = Fastify();
-  await app.register(approvalRoutes);
+  await app.register(approvalRoutes, { authenticate });
   await app.ready();
   return app;
 }
 
-// Helper to run graph until it pauses at the approval node
 async function setupPausedGraphRun(runId: string, patientId: string) {
   await db.insert(agentRuns).values({
     id: runId,
     status: "awaiting_approval",
-    scenarioId: "demo-001",
     patientId,
   });
-
-  const config = { configurable: { thread_id: runId } };
-  
-  // Invoke graph so it processes up to the approval interrupt point
-  await triageGraph.invoke(
-    {
-      patientId,
-      scenarioId: "demo-001",
-    },
-    config
-  );
 }
 
 describe("Approval Routes Integration Tests", () => {
@@ -43,6 +64,51 @@ describe("Approval Routes Integration Tests", () => {
     await db.delete(auditEvents);
     await db.delete(approvals);
     await db.delete(agentRuns);
+    graphState.next = ["approval"];
+    graphState.approvalStatus = "pending";
+    graphState.decision = "approved";
+    graphState.failNextInvoke = false;
+    vi.mocked(triageGraph.invoke).mockClear();
+    vi.mocked(triageGraph.getState).mockClear();
+  });
+
+  it("requires authentication before recording a decision", async () => {
+    const app = await buildApp(async () => null);
+    const runId = crypto.randomUUID();
+    await setupPausedGraphRun(runId, "synthetic-patient-unauthenticated");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/runs/${runId}/approval`,
+      headers: { "idempotency-key": "unauthenticated-key" },
+      payload: { decision: "approved", reviewerId: "spoofed-reviewer" },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(await db.select().from(approvals)).toHaveLength(0);
+    expect(triageGraph.invoke).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("denies authenticated callers without the reviewer role", async () => {
+    const app = await buildApp(async () => ({
+      reviewerId: "synthetic-observer",
+      roles: ["observer"],
+    }));
+    const runId = crypto.randomUUID();
+    await setupPausedGraphRun(runId, "synthetic-patient-observer");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/runs/${runId}/approval`,
+      headers: { "idempotency-key": "unauthorized-role-key" },
+      payload: { decision: "rejected" },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(await db.select().from(approvals)).toHaveLength(0);
+    expect(triageGraph.invoke).not.toHaveBeenCalled();
+    await app.close();
   });
 
   it("rejects invalid request body or malformed runId with 400 Bad Request", async () => {
@@ -90,7 +156,7 @@ describe("Approval Routes Integration Tests", () => {
       method: "POST",
       url: `/api/runs/${runId}/approval`,
       headers: { "idempotency-key": "approval-test-001" },
-      payload: { decision: "approved", reviewerId: "reviewer-test-001" },
+      payload: { decision: "approved", reviewerId: "spoofed-reviewer" },
     });
 
     expect(response.statusCode).toBe(200);
@@ -112,6 +178,7 @@ describe("Approval Routes Integration Tests", () => {
       .where(eq(approvals.runId, runId));
     expect(approvalRecords).toHaveLength(1);
     expect(approvalRecords[0].decision).toBe("approved");
+    expect(approvalRecords[0].reviewerId).toBe(reviewerIdentity.reviewerId);
 
     await app.close();
   });
@@ -213,6 +280,101 @@ describe("Approval Routes Integration Tests", () => {
       .where(eq(approvals.runId, runId));
     expect(approvalRecords).toHaveLength(1);
 
+    await app.close();
+  });
+
+  it("records rejection, completes the run, and writes a rejection audit event", async () => {
+    const app = await buildApp();
+    const runId = crypto.randomUUID();
+    graphState.decision = "rejected";
+    await setupPausedGraphRun(runId, "synthetic-patient-rejected");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/runs/${runId}/approval`,
+      headers: { "idempotency-key": "rejection-safety-key" },
+      payload: { decision: "rejected" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(graphState.approvalStatus).toBe("rejected");
+
+    const [run] = await db
+      .select()
+      .from(agentRuns)
+      .where(eq(agentRuns.id, runId));
+    expect(run.status).toBe("completed");
+
+    const approvalRecords = await db
+      .select()
+      .from(approvals)
+      .where(eq(approvals.runId, runId));
+    expect(approvalRecords).toHaveLength(1);
+    expect(approvalRecords[0].decision).toBe("rejected");
+
+    const events = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.runId, runId));
+    expect(events.map((event) => event.eventType)).toEqual(
+      expect.arrayContaining(["approval_rejected", "workflow_completed"]),
+    );
+    expect(triageGraph.invoke).toHaveBeenCalledOnce();
+    await app.close();
+  });
+
+  it("recovers a persisted approval after graph resume failure without duplicating the decision", async () => {
+    const app = await buildApp();
+    const runId = crypto.randomUUID();
+    graphState.failNextInvoke = true;
+    await setupPausedGraphRun(runId, "synthetic-patient-retry");
+
+    const request = {
+      method: "POST" as const,
+      url: `/api/runs/${runId}/approval`,
+      headers: { "idempotency-key": "resume-retry-key" },
+      payload: { decision: "approved" },
+    };
+
+    const firstResponse = await app.inject(request);
+    expect(firstResponse.statusCode).toBe(500);
+
+    const [failedRun] = await db
+      .select()
+      .from(agentRuns)
+      .where(eq(agentRuns.id, runId));
+    expect(failedRun.status).toBe("failed");
+
+    const retryResponse = await app.inject(request);
+    expect(retryResponse.statusCode).toBe(200);
+    expect(retryResponse.json().replayed).toBe(true);
+    expect(retryResponse.json().status).toBe("completed");
+
+    const [completedRun] = await db
+      .select()
+      .from(agentRuns)
+      .where(eq(agentRuns.id, runId));
+    expect(completedRun.status).toBe("completed");
+
+    const approvalRecords = await db
+      .select()
+      .from(approvals)
+      .where(eq(approvals.runId, runId));
+    expect(approvalRecords).toHaveLength(1);
+
+    const events = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.runId, runId));
+    expect(events.filter((event) => event.eventType === "approval_granted"))
+      .toHaveLength(1);
+    expect(events.filter((event) => event.eventType === "workflow_completed"))
+      .toHaveLength(1);
+    expect(triageGraph.invoke).toHaveBeenCalledTimes(2);
+
+    const completedReplay = await app.inject(request);
+    expect(completedReplay.statusCode).toBe(200);
+    expect(triageGraph.invoke).toHaveBeenCalledTimes(2);
     await app.close();
   });
 });
