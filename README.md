@@ -454,6 +454,24 @@ Last verified in this checkout: `pnpm test` passed all 73 tests in 19 files;
 `pnpm typecheck` passed. Run `pnpm db:check` to validate migration-file
 consistency. Applied migration state has not been verified here.
 
+### Focused test results
+
+These terminal captures show passing, synthetic or mocked test runs. The FHIR
+MCP tests exercise read-only tools; the graph context test uses a mocked FHIR
+client and does not connect to an openEHR or live FHIR system.
+
+**LangGraph workflow — approval interrupt, rejection, and resume**
+
+![Passing LangGraph workflow tests](screenshots/langGraph_workflow%20.png)
+
+**FHIR MCP server — read-only tools and error handling**
+
+![Passing FHIR MCP server tests](screenshots/mcp_server.png)
+
+**LangGraph with mocked FHIR context — approval/rejection and MCP cleanup**
+
+![Passing LangGraph FHIR context integration tests](screenshots/Graph_FHIR_context.png)
+
 For additional testing instructions, see [`tests/README.md`](tests/README.md).
 
 ## Documentation
