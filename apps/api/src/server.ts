@@ -3,6 +3,9 @@ import { intakeRoutes } from "./routes/intake.routes.js";
 import { connectRedis } from "./redis/redis.js";
 import { checkpointer } from "./ai/checkpointer.js";
 import { approvalRoutes } from "./routes/approval.routes.js";
+import { validateRuntimeEnv } from "./config/env.js";
+
+validateRuntimeEnv();
 
 const app = Fastify({
   logger: {
