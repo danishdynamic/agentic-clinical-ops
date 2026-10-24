@@ -6,6 +6,8 @@ The project explores how AI agents can assist with clinical operations while kee
 
 > **Safety principle:** AI generated recommendations are proposals, not authorized clinical actions. Validate proposals and obtain the required human approval before executing clinical record writes. This repository currently implements read only FHIR/openEHR clients; it does not implement clinical record writes.
 
+![Architecture](screenshots/Agentic%20Clinical%20Ops%20Architecture.png)
+
 ## Table of Contents
 
 - [Agentic Clinical Ops](#agentic-clinical-ops)
@@ -40,6 +42,7 @@ The project explores how AI agents can assist with clinical operations while kee
     - [Error responses](#error-responses)
   - [Testing](#testing)
     - [Current coverage](#current-coverage)
+    - [Focused test results](#focused-test-results)
   - [Documentation](#documentation)
   - [Current Status](#current-status)
   - [Roadmap](#roadmap)
